@@ -1,7 +1,7 @@
-// Bindings name : kissfft_in_odin
+// Bindings name : kiss_fft_simd_in_odin
 //
 // Description : This are simple but very fast bindings in Odin to the f32 FFT and IFFT
-//               of KISS_FFT.
+//               of KISS_FFT with SIMD.
 //               The KISS_FFT is a small, fast, and simple FFT library written in C.
 //               The trick that makes this bindings so fast is that they are not compiled
 //               with GCC, like the KISS_FFT project, but with CLANG, with fast optimization
@@ -19,22 +19,22 @@
 //
 //
 // Author of the bindings : Joao Carvalho
-// Date                   : 2024-07-07
+// Date                   : 2024-07-20
 //
 // Original GitHub of KISS_FFT : 
 //        https://github.com/mborgerding/kissfft
 //
 // To compile this lib do:
 //
-//       $ make kiss_fft
+//       $ make kiss_fft_simd
 //       $ make
-//       $ time ./kissfft.exe
+//       $ time ./kiss_fft_simd.exe
 //
 //       or
 //
-//       $ make kiss_fft
+//       $ make kiss_fft_simd
 //       $ make opti_max
-//       $ time ./kissfft.exe
+//       $ time ./kiss_fft_simd.exe
 //
 //
 // License: The same of KISS_FFT library.
@@ -43,7 +43,7 @@
 // Have fun.
 
 
-package kiss_fft_odin
+package kiss_fft_simd_odin
 
 import "base:runtime"
 
@@ -115,11 +115,6 @@ apply_ifft_correction_factor :: proc ( vec     : [ ^ ]complex64,
     }
 }
 
-
-//
-// Tests
-//
-
 f32_to_c64 :: #force_inline proc ( re, im : f32 ) -> complex64 {
 
     return complex64( complex( re, im ) )
@@ -137,7 +132,6 @@ print_vec :: proc ( var_name : string,
                     imag( vec[ i ] )  )
     }
 }
-
 
 print_vec_simd :: proc ( var_name : string,
                          vec      : [ ^ ]f32,
@@ -174,22 +168,10 @@ test_kiss_fft_SIMD_FFT_IFFT :: proc ( ) {
 
     fmt.printfln( "===>>> test SIMD FFT followed by IFFT.\n" )
 
-    // n_elems_fft : c.int = 16      // 1024
 
-    n_elems_fft : c.int = 16_000     // 1024
+    n_elems_fft : c.int = 16_000     // 1024    // 16
 
-
-    // len_rows :: 8
-
-
-    // len_rows :: 8 * 1_000
-    //
-    // rows_fft_buf_original : [ len_rows ][ ^ ]complex64 = [ len_rows ][ ^ ]complex64{ }
-    // rows_fft_buf_in_simd  : [ len_rows ][ ^ ]complex64 = [ len_rows ][ ^ ]complex64{ }
-    // rows_fft_buf_out_simd : [ len_rows ][ ^ ]complex64 = [ len_rows ][ ^ ]complex64{ }
-    // rows_fft_buf_out_dest : [ len_rows ][ ^ ]complex64 = [ len_rows ][ ^ ]complex64{ }
-
-    len_rows :: 8 * 1_000 // 8 * 20_000 
+    len_rows :: 8 * 1_000    // 8 * 20_000     // 8 
 
     // Allocate the 2D Arrays buf_original and buf_destination
     rows_fft_buf_original : [ ][ ^ ]complex64 = make( [ ][ ^ ]complex64, len_rows )
@@ -203,14 +185,15 @@ test_kiss_fft_SIMD_FFT_IFFT :: proc ( ) {
     rows_fft_buf_out_simd : [ ^ ]complex64
    
     //
-    // FFT: Fast Fourier Transform
+    // FFT: Fast Fourier Transform plan creation.
     //
 
     cfg_fft := kiss_fft_alloc( n_elems_fft,
                                Dir_FFT,
                                nil,
                                nil )
-    // Free the configuration.
+    
+    // Free the plan configuration.
     defer libc.free( cfg_fft )
 
     assert( cfg_fft != nil, "Failed to allocate kiss_fft_cfg_fft" )
@@ -222,18 +205,18 @@ test_kiss_fft_SIMD_FFT_IFFT :: proc ( ) {
     for row in 0 ..< len_rows {
         rows_fft_buf_original[ row ] = make( [ ^ ]complex64, n_elems_fft )
     }
+
     defer { 
-        for row in 0 ..< len_rows {
-            free( rows_fft_buf_original[ row ] )
-        } 
-    }
+            for row in 0 ..< len_rows {
+                free( rows_fft_buf_original[ row ] )
+            }    
+        }
 
 
-    // Allocate buf_in_simd.
-    aligment_128_in_bytes : int = 128 / 8     // 128 bits = 16 bytes 
-
+    // Allocate buf_in_simd with aligned memory to 128 bits.
     n_elems_fft_simd := n_elems_fft * 4 
 
+    aligment_128_in_bytes : int = 128 / 8     // 128 bits = 16 bytes 
 
     buf_in_tmp : [ ]complex64
     buf_in     : [ ^ ]complex64
@@ -249,7 +232,7 @@ test_kiss_fft_SIMD_FFT_IFFT :: proc ( ) {
 
 
 
-    // Allocate buf_out_simd.
+    // Allocate buf_out_simd with aligned memory to 128 bits.
     buf_out_tmp : [ ]complex64
     buf_out     : [ ^ ]complex64
     err_2       : runtime.Allocator_Error
@@ -268,17 +251,17 @@ test_kiss_fft_SIMD_FFT_IFFT :: proc ( ) {
         rows_fft_buf_out_dest[ row ] = make( [ ^ ]complex64, n_elems_fft )
     }
     defer { 
-        for row in 0 ..< len_rows {
-            free( rows_fft_buf_out_dest[ row ] )
+            for row in 0 ..< len_rows {
+                free( rows_fft_buf_out_dest[ row ] )
+            }
         }
-    }
 
 
     // Fill in buf_original and buf_in with some data
     for row in 0 ..< len_rows {
         for i in 0 ..< n_elems_fft {
-//            re := math.cos( 2.0 * math.PI * ( f32( i ) / f32(  n_elems_fft / 3 ) ) )
-//            rows_fft_buf_original[ row ][ i ] = f32_to_c64( re, re )
+            // re := math.cos( 2.0 * math.PI * ( f32( i ) / f32(  n_elems_fft / 3 ) ) )
+            // rows_fft_buf_original[ row ][ i ] = f32_to_c64( re, re )
 
             re := f32( i )
             cm := f32( i ) + 0.5
@@ -360,14 +343,15 @@ test_kiss_fft_SIMD_FFT_IFFT :: proc ( ) {
     
 
     //
-    // IFFT: Inverse Fast Fourier Transform
+    // IFFT: Inverse Fast Fourier Transform plan creation.
     //
     
     cfg_ifft := kiss_fft_alloc( n_elems_fft,
                                 Dir_IFFT,
                                 nil,
                                 nil )
-    // Free the configuration.
+    
+    // Free the plan configuration.
     defer libc.free( cfg_ifft )
 
     assert( cfg_ifft != nil, "Failed to allocate kiss_fft_cfg_ifft" )
@@ -424,7 +408,9 @@ test_kiss_fft_SIMD_FFT_IFFT :: proc ( ) {
     }
     */
 
-    // Apply the correction factor.
+    // Apply the correction factor to the FFT,
+    // because the FFT made by KISS_FFT doesn't apply automatically the
+    // correction factor.
     for row in 0 ..< len_rows {
         apply_ifft_correction_factor( rows_fft_buf_out_dest[ row ], n_elems_fft )
     }
@@ -455,11 +441,13 @@ test_kiss_fft_SIMD_FFT_IFFT :: proc ( ) {
     fmt.printfln( "...end test SIMD FFT followed by IFFT PASSED.\n" )
 }
 
-
-
-
+//
+// Previous tests for KISS_FFT without SIMD.
+// Not applyable to KISS_FFT SIMD.
+// 
 
 /*
+
 test_kiss_fft :: proc ( ) {
 
     fmt.printfln( "===>>> test FFT.\n" )
@@ -498,9 +486,11 @@ test_kiss_fft :: proc ( ) {
 
     fmt.printfln( "...end test FFT.\n" )
 }
+
 */
 
 /*
+
 test_kiss_fft_reuse_a_vector :: proc ( ) {
 
     fmt.printfln( "===>>> test FFT reuse a vector.\n" )
@@ -544,10 +534,11 @@ test_kiss_fft_reuse_a_vector :: proc ( ) {
 
     fmt.printfln( "...end test FFT reuse a vector.\n" )
 }
+
 */
 
-
 /*
+
 test_kiss_fft_FFT_IFFT :: proc () {
 
     fmt.printfln( "===>>> test FFT followed by IFFT.\n" )
@@ -635,3 +626,4 @@ test_kiss_fft_FFT_IFFT :: proc () {
 }
 
 */
+
